@@ -3,14 +3,8 @@ import torch
 import torch.utils.data as data_utils
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 from PIL import Image
 from torch.utils.data import DataLoader, TensorDataset, random_split
-from torch.utils.tensorboard import SummaryWriter
-import time
-from collections import OrderedDict
-from collections import namedtuple
-from itertools import product
 
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -107,77 +101,9 @@ class UNet(nn.Module):
         x = self.up4(x, x1)
         logits = self.outc(x)
         return logits
-class RunBuilder():
-    @staticmethod
-    def get_runs(params):
-
-        Run = namedtuple('Run', params.keys())
-
-        runs = []
-        for v in product(*params.values()):
-            runs.append(Run(*v))
-        return runs
-class RunManager():
-    def __init__(self):
-
-        self.epoch_count = 0
-        self.epoch_loss = 0
-        self.epoch_num_correct = 0
-        self.epoch_start_time = None
-
-        self.run_params = None
-        self.run_count = 0
-        self.run_data = []
-        self.run_start_time = None
-
-        self.network = None
-        self.loader = None
-        self.tb = None
-
-    def begin_run(self, run, network, loader):
-        self.run_start_time = time.time()
-        self.run_params = run
-        self.run_count += 1
-        self.network = network
-        self.loader = loader
-        self.tb = SummaryWriter(comment=f'-{run}')
-        characteristics, labels = next(iter(self.loader))
-
-    def end_run(self):
-        self.tb.close()
-        self.epoch_count = 0
-
-    def begin_epoch(self):
-        self.epoch_start_time = time.time()
-        self.epoch_count += 1
-        self.epoch_loss = 0
-        self.epoch_num_correct = 0
-
-    def end_epoch(self):
-        epoch_duration = time.time() - self.epoch_start_time
-        run_duration = time.time() - self.run_start_time
-
-        loss = self.epoch_loss / len(self.loader.dataset)
- #       accuracy = self.epoch_num_correct / len(self.loader.dataset)
-
-        self.tb.add_scalar('Loss', loss, self.epoch_count)
- #       self.tb.add_scalar('Accuracy', accuracy, self.epoch_count)
-
-    def _get_num_correct(self, preds, labels):
-        return preds.argmax(dim=1).eq(labels).sum().item()
-
-    def track_loss(self, loss, batch):
-        self.epoch_loss += loss.item() * batch[0].shape[0]
-
-    def track_num_correct(self, preds, labels):
-        self.epoch_num_correct += self._get_num_correct(preds, labels)
-
-    def inform(self, discrete_n):
-        if self.epoch_count % discrete_n == 0:
-            print(self.epoch_count, ' ', self.run_count)
 
 def data_get(file_name):
-    image = Image.open('Actin.tif')
+    image = Image.open(file_name)
     holdall = []
     cut_size = 64
     step_size = 32
@@ -196,35 +122,20 @@ def data_get(file_name):
     label = torch.unsqueeze(label, 1)
     return (train, label, cut_size)
 
-params = OrderedDict(lr=[.01, 0.001], batch_size=[100,200])
-m = RunManager()
+
+
 train, label, cut_size = data_get('Actin.tif')
-print(train.shape)
 train_tensor = data_utils.TensorDataset(train, label)
 criterion = nn.BCELoss()
 map = nn.Sigmoid()
-for run in RunBuilder.get_runs(params):
-
-    network = UNet(1, 1)
-    loader = DataLoader(train_tensor, batch_size=run.batch_size, shuffle=True)
-    optimizer = torch.optim.Adam(network.parameters(), lr=run.lr)
-    m.begin_run(run, network, loader)
-
-    for epoch in range(1):
-        m.begin_epoch()
-        count = 0
-        for batch in loader:
-            print(count)
-            count = count + 1
-            characteristics, labels = batch
-            preds = network(characteristics)  # Pass Batch
-            #loss = criterion(preds.sum(), labels.sum()) # loss estimation
-            loss = criterion(map(preds), map(labels))
-            optimizer.zero_grad()  # Zero Gradients
-            loss.backward()  # Calculate Gradients
-            optimizer.step()  # Update Weights
-            m.track_loss(loss, batch)
-       #     m.track_num_correct(preds, labels)
-        m.inform(2)
-        m.end_epoch()
-    m.end_run()
+network = UNet(1, 1)
+loader = DataLoader(train_tensor, batch_size=100, shuffle=True)
+optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
+batch = next(iter(loader))
+characteristics, labels = batch
+print(characteristics.shape)
+preds = network(characteristics)  # Pass Batch
+loss = criterion(map(preds), map(labels))
+optimizer.zero_grad()  # Zero Gradients
+loss.backward()  # Calculate Gradients
+optimizer.step()  # Update Weights
