@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, TensorDataset, random_split
+import time
+from torch.utils.tensorboard import SummaryWriter
 
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -58,9 +60,6 @@ class Up(nn.Module):
 
         x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
                         diffY // 2, diffY - diffY // 2])
-        # if you have padding issues, see
-        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
-        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
 class OutConv(nn.Module):
@@ -101,7 +100,6 @@ class UNet(nn.Module):
         x = self.up4(x, x1)
         logits = self.outc(x)
         return logits
-
 def data_get(file_name):
     image = Image.open(file_name)
     holdall = []
@@ -123,19 +121,31 @@ def data_get(file_name):
     return (train, label, cut_size)
 
 
-
+print(torch.cuda.device_count())
 train, label, cut_size = data_get('Actin.tif')
 train_tensor = data_utils.TensorDataset(train, label)
 criterion = nn.BCELoss()
 map = nn.Sigmoid()
 network = UNet(1, 1)
-loader = DataLoader(train_tensor, batch_size=100, shuffle=True)
+if (torch.cuda.device_count() ==1 ):
+    network = network.cuda()
+loader = DataLoader(train_tensor, batch_size=5, shuffle=True)
 optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
-batch = next(iter(loader))
-characteristics, labels = batch
-print(characteristics.shape)
-preds = network(characteristics)  # Pass Batch
-loss = criterion(map(preds), map(labels))
-optimizer.zero_grad()  # Zero Gradients
-loss.backward()  # Calculate Gradients
-optimizer.step()  # Update Weights
+start_time = time.time()
+tb = SummaryWriter(comment=f'bunny')
+for epoch in range(100):
+    loss_count = 0
+    for batch in loader:
+        characteristics, labels = batch
+        if (torch.cuda.device_count() == 1):
+            characteristics = characteristics.cuda()
+            labels = labels.cuda()
+        preds = network(characteristics)  # Pass Batch
+        loss = criterion(map(preds), map(labels))
+        loss_count += loss
+        optimizer.zero_grad()  # Zero Gradients
+        loss.backward()  # Calculate Gradients
+        optimizer.step()  # Update Weights
+    print(loss_count)
+    tb.add_scalar('Loss', loss_count, epoch)
+print(time.time() - start_time)
